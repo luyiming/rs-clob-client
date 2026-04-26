@@ -222,6 +222,18 @@ pub struct Collection {
 }
 
 /// A prediction market event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Builder)]
+#[non_exhaustive]
+pub struct EventMetadata {
+    #[serde(rename = "context_description")]
+    pub context_description: Option<String>,
+    #[serde(rename = "context_requires_regen")]
+    pub context_requires_regen: Option<bool>,
+    #[serde(rename = "context_updated_at")]
+    pub context_updated_at: Option<DateTime<Utc>>,
+}
+
+/// A prediction market event.
 #[serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Builder)]
 #[serde(rename_all = "camelCase")]
@@ -334,6 +346,7 @@ pub struct Event {
     pub cumulative_markets: Option<bool>,
     pub away_team_name: Option<String>,
     pub home_team_name: Option<String>,
+    pub event_metadata: Option<EventMetadata>,
 }
 
 /// A prediction market.
@@ -755,4 +768,47 @@ pub struct SearchResults {
     pub tags: Option<Vec<SearchTag>>,
     pub profiles: Option<Vec<Profile>>,
     pub pagination: Option<Pagination>,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::Market;
+
+    #[test]
+    fn market_event_deserializes_event_metadata() {
+        let market: Market = serde_json::from_value(json!({
+            "id": "market-1",
+            "events": [{
+                "id": "event-1",
+                "eventMetadata": {
+                    "context_description": "Sample context",
+                    "context_requires_regen": true,
+                    "context_updated_at": "2026-04-26T05:46:19.849Z"
+                }
+            }]
+        }))
+        .expect("market should deserialize");
+
+        let event_metadata = market
+            .events
+            .as_ref()
+            .and_then(|events| events.first())
+            .and_then(|event| event.event_metadata.as_ref())
+            .expect("event metadata should deserialize");
+
+        assert_eq!(
+            event_metadata.context_description.as_deref(),
+            Some("Sample context")
+        );
+        assert_eq!(event_metadata.context_requires_regen, Some(true));
+        assert_eq!(
+            event_metadata
+                .context_updated_at
+                .as_ref()
+                .map(chrono::DateTime::to_rfc3339),
+            Some("2026-04-26T05:46:19.849+00:00".to_string())
+        );
+    }
 }
