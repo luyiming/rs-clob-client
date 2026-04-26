@@ -358,6 +358,28 @@ impl<S: State> Client<S> {
         }))
     }
 
+    /// Receive one stream of all market-channel messages without changing subscriptions.
+    pub fn market_messages(&self) -> Result<impl Stream<Item = Result<WsMessage>> + use<S>> {
+        let resources = self.inner.get_or_create_channel(ChannelType::Market)?;
+        Ok(resources.subscriptions.market_messages())
+    }
+
+    /// Subscribe additional market assets without creating another receiver.
+    pub fn subscribe_market_assets(&self, asset_ids: &[U256], custom_features: bool) -> Result<()> {
+        self.inner
+            .get_or_create_channel(ChannelType::Market)?
+            .subscriptions
+            .subscribe_market_assets_with_options(asset_ids, custom_features)
+    }
+
+    /// Unsubscribe market assets without tying the operation to a typed stream.
+    pub fn unsubscribe_market_assets(&self, asset_ids: &[U256]) -> Result<()> {
+        self.inner
+            .unsubscribe_and_cleanup(ChannelType::Market, |subs| {
+                subs.unsubscribe_market(asset_ids)
+            })
+    }
+
     /// Get the current connection state for a specific channel.
     ///
     /// Returns [`ConnectionState::Disconnected`] if the channel has not been
@@ -393,10 +415,7 @@ impl<S: State> Client<S> {
     /// This decrements the reference count for each asset. The server unsubscribe
     /// is only sent when no other subscriptions are using those assets.
     pub fn unsubscribe_orderbook(&self, asset_ids: &[U256]) -> Result<()> {
-        self.inner
-            .unsubscribe_and_cleanup(ChannelType::Market, |subs| {
-                subs.unsubscribe_market(asset_ids)
-            })
+        self.unsubscribe_market_assets(asset_ids)
     }
 
     /// Unsubscribe from price changes for specific assets.

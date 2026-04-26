@@ -1272,6 +1272,86 @@ mod unsubscribe {
     }
 }
 
+mod market_messages {
+    use super::*;
+
+    #[tokio::test]
+    async fn market_messages_receives_assets_added_after_stream_creation() {
+        let mut server = MockWsServer::start().await;
+        let endpoint = server.ws_url("/ws/market");
+
+        let client = Client::new(&endpoint, Config::default()).unwrap();
+        let asset_id = payloads::asset_id();
+        let other_asset_id = payloads::other_asset_id();
+
+        client.subscribe_market_assets(&[asset_id], true).unwrap();
+        let stream = client.market_messages().unwrap();
+        let mut stream = Box::pin(stream);
+
+        let sub = server.recv_subscription().await.unwrap();
+        assert!(sub.contains(&asset_id.to_string()));
+        assert!(sub.contains("\"custom_feature_enabled\":true"));
+
+        server.send(&payloads::book().to_string());
+        let result = timeout(Duration::from_secs(2), stream.next()).await;
+        let message = result.unwrap().unwrap().unwrap();
+        assert!(matches!(message, WsMessage::Book(_)));
+
+        client
+            .subscribe_market_assets(&[other_asset_id], true)
+            .unwrap();
+        let sub = server.recv_subscription().await.unwrap();
+        assert!(sub.contains(&other_asset_id.to_string()));
+        assert!(sub.contains("\"custom_feature_enabled\":true"));
+
+        server.send(&payloads::price_change_batch(other_asset_id).to_string());
+        let result = timeout(Duration::from_secs(2), stream.next()).await;
+        let message = result.unwrap().unwrap().unwrap();
+        assert!(matches!(message, WsMessage::PriceChange(_)));
+    }
+
+    #[tokio::test]
+    async fn market_messages_can_start_before_assets_are_subscribed() {
+        let mut server = MockWsServer::start().await;
+        let endpoint = server.ws_url("/ws/market");
+
+        let client = Client::new(&endpoint, Config::default()).unwrap();
+        let asset_id = payloads::asset_id();
+
+        let stream = client.market_messages().unwrap();
+        let mut stream = Box::pin(stream);
+
+        client.subscribe_market_assets(&[asset_id], true).unwrap();
+        let sub = server.recv_subscription().await.unwrap();
+        assert!(sub.contains(&asset_id.to_string()));
+        assert!(sub.contains("\"custom_feature_enabled\":true"));
+
+        server.send(&payloads::book().to_string());
+        let result = timeout(Duration::from_secs(2), stream.next()).await;
+        let message = result.unwrap().unwrap().unwrap();
+        assert!(matches!(message, WsMessage::Book(_)));
+    }
+
+    #[tokio::test]
+    async fn market_messages_unsubscribe_market_assets_sends_unsubscribe() {
+        let mut server = MockWsServer::start().await;
+        let endpoint = server.ws_url("/ws/market");
+
+        let client = Client::new(&endpoint, Config::default()).unwrap();
+        let asset_id = payloads::asset_id();
+
+        client.subscribe_market_assets(&[asset_id], true).unwrap();
+        let _stream = client.market_messages().unwrap();
+        let _: Option<String> = server.recv_subscription().await;
+
+        client.unsubscribe_market_assets(&[asset_id]).unwrap();
+
+        let unsub = server.recv_subscription().await.unwrap();
+        assert!(unsub.contains("\"operation\":\"unsubscribe\""));
+        assert!(unsub.contains(&asset_id.to_string()));
+    }
+}
+
 mod client_state {
     use polymarket_client_sdk::clob::ws::ChannelType;
 

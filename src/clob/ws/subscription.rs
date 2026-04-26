@@ -203,17 +203,15 @@ impl SubscriptionManager {
         self.subscribe_market_with_options(asset_ids, false)
     }
 
-    /// Subscribe to public market data channel with options.
+    /// Subscribe to public market data assets without creating a filtered message stream.
     ///
-    /// When `custom_features` is true, enables receiving additional message types:
-    /// `best_bid_ask`, `new_market`, `market_resolved`.
-    ///
-    /// This will fail if `asset_ids` is empty.
-    pub fn subscribe_market_with_options(
+    /// Use this with [`Self::market_messages`] when a caller wants one long-lived
+    /// receiver and needs to mutate the subscribed asset set over time.
+    pub fn subscribe_market_assets_with_options(
         &self,
-        asset_ids: Vec<U256>,
+        asset_ids: &[U256],
         custom_features: bool,
-    ) -> Result<impl Stream<Item = Result<WsMessage>> + use<>> {
+    ) -> Result<()> {
         if asset_ids.is_empty() {
             return Err(WsError::SubscriptionFailed(
                 "asset_ids cannot be empty: at least one asset ID must be provided for subscription"
@@ -275,10 +273,56 @@ impl SubscriptionManager {
         self.active_subs.insert(
             sub_id,
             SubscriptionInfo {
-                target: SubscriptionTarget::Assets(asset_ids.clone()),
+                target: SubscriptionTarget::Assets(asset_ids.to_vec()),
                 created_at: Instant::now(),
             },
         );
+
+        Ok(())
+    }
+
+    /// Receive all parsed market-channel messages for currently subscribed assets.
+    ///
+    /// This creates one receiver from the market channel broadcast and does not
+    /// alter the subscribed asset set.
+    pub fn market_messages(&self) -> impl Stream<Item = Result<WsMessage>> + use<> {
+        self.interest.add(MessageInterest::MARKET);
+        let mut rx = self.connection.subscribe();
+
+        try_stream! {
+            loop {
+                match rx.recv().await {
+                    Ok(msg) => {
+                        if !msg.is_user() {
+                            yield msg;
+                        }
+                    }
+                    Err(RecvError::Lagged(n)) => {
+                        #[cfg(not(feature = "tracing"))]
+                        let _ = n;
+                        #[cfg(feature = "tracing")]
+                        tracing::warn!("Subscription lagged, missed {n} messages — continuing");
+                    }
+                    Err(RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Subscribe to public market data channel with options.
+    ///
+    /// When `custom_features` is true, enables receiving additional message types:
+    /// `best_bid_ask`, `new_market`, `market_resolved`.
+    ///
+    /// This will fail if `asset_ids` is empty.
+    pub fn subscribe_market_with_options(
+        &self,
+        asset_ids: Vec<U256>,
+        custom_features: bool,
+    ) -> Result<impl Stream<Item = Result<WsMessage>> + use<>> {
+        self.subscribe_market_assets_with_options(&asset_ids, custom_features)?;
 
         // Create filtered stream with its own receiver
         let mut rx = self.connection.subscribe();
